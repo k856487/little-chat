@@ -88,6 +88,7 @@ class MainActivity : ComponentActivity() {
         val messages = remember { mutableStateListOf<ChatMessage>().apply { addAll(initialMessages) } }
         var input by remember { mutableStateOf("") }
         var generating by remember { mutableStateOf(false) }
+        var cancelRequested by remember { mutableStateOf(false) }
         var modelLoading by remember { mutableStateOf(false) }
         var modelReady by remember { mutableStateOf(false) }
         var status by remember { mutableStateOf("首次启动需要从安装包解压模型，请稍候。") }
@@ -180,6 +181,7 @@ class MainActivity : ComponentActivity() {
             messages.add(ChatMessage(true, text))
             persistActiveChat()
             generating = true
+            cancelRequested = false
             status = if (thinkingMode) "正在思考并生成回答…" else "正在生成回答…"
             scope.launch {
                 val history = previousMessages.takeLast(4).joinToString("\n") { message ->
@@ -200,7 +202,7 @@ class MainActivity : ComponentActivity() {
                 } catch (e: Exception) {
                     "生成调用异常：" + (e.message ?: e.javaClass.simpleName)
                 }
-                val cleanAnswer = answer.trim().ifBlank { "模型没有生成可见文本。请查看状态提示；如果一直停在同一阶段，说明原生推理阶段没有继续执行。" }
+                val cleanAnswer = answer.trim().ifBlank { if (cancelRequested) "已中断生成。" else "模型没有生成可见文本。请查看状态提示；如果一直停在同一阶段，说明原生推理阶段没有继续执行。" }
                 messages.add(ChatMessage(false, cleanAnswer))
                 persistActiveChat()
                 generating = false
@@ -244,9 +246,9 @@ class MainActivity : ComponentActivity() {
                 Row(Modifier.fillMaxWidth().background(Color.White).navigationBarsPadding().padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.Bottom) {
                     IconButton(onClick = { filePicker.launch(arrayOf("text/plain", "text/*", "application/json")) }, enabled = !generating && !modelLoading) { Text("📎", fontSize = 21.sp) }
                     BasicTextField(value = input, onValueChange = { input = it }, modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp).background(Color(0xFFF4F4F5), RoundedCornerShape(22.dp)).padding(horizontal = 14.dp, vertical = 14.dp), textStyle = TextStyle(fontSize = 15.sp, color = Color(0xFF222222)), decorationBox = { inner -> Box { if (input.isEmpty()) Text("给 Little Chat 发送消息", color = Color.Gray, fontSize = 14.sp); inner() } }, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send), keyboardActions = KeyboardActions(onSend = { send() }))
-                    IconButton(onClick = { thinkingMode = !thinkingMode; prefs.edit().putBoolean("thinking_mode", thinkingMode).apply() }, enabled = !generating && !modelLoading, modifier = Modifier.size(44.dp)) { Text(if (thinkingMode) "🧠" else "💭", fontSize = 21.sp) }
+                    IconButton(onClick = { thinkingMode = !thinkingMode; prefs.edit().putBoolean("thinking_mode", thinkingMode).apply() }, enabled = !generating && !modelLoading, modifier = Modifier.size(44.dp)) { Text("✧", color = if (thinkingMode) Color(0xFF202020) else Color(0xFF9A9A9A), fontSize = 27.sp) }
                     Spacer(Modifier.width(2.dp))
-                    Button(onClick = { send() }, enabled = modelReady && !generating && !modelLoading && input.isNotBlank(), modifier = Modifier.height(48.dp), contentPadding = PaddingValues(horizontal = 13.dp)) { Text("↑", fontSize = 22.sp) }
+                    Button(onClick = { if (generating) { cancelRequested = true; status = "正在请求中断…"; native.cancelGeneration() } else send() }, enabled = if (generating) true else modelReady && !modelLoading && input.isNotBlank(), modifier = Modifier.height(48.dp), contentPadding = PaddingValues(horizontal = 13.dp)) { Text(if (generating) "■" else "↑", fontSize = 22.sp) }
                 }
             }
         }
@@ -259,17 +261,6 @@ class MainActivity : ComponentActivity() {
                     Column(Modifier.fillMaxWidth().heightIn(max = 520.dp).verticalScroll(rememberScrollState())) {
                         Text("设置", fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
                         Spacer(Modifier.height(8.dp))
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text("思考模式", fontSize = 15.sp)
-                                Text(if (thinkingMode) "已开启（输入栏 🧠 图标）" else "已关闭（输入栏 💭 图标）", fontSize = 12.sp, color = Color.Gray)
-                            }
-                            Switch(checked = thinkingMode, onCheckedChange = {
-                                thinkingMode = it
-                                prefs.edit().putBoolean("thinking_mode", it).apply()
-                            })
-                        }
-                        Spacer(Modifier.height(12.dp))
                         Text("上下文长度：$contextSize tokens", fontSize = 14.sp)
                         Slider(value = contextSize.toFloat(), onValueChange = { contextSize = it.toInt() }, valueRange = 1024f..8192f, steps = 6)
                         Text("更长上下文会增加内存占用；保存后会重新加载模型。", fontSize = 12.sp, color = Color.Gray)
