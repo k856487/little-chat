@@ -1,0 +1,49 @@
+name: Build Android APK
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install Android NDK and CMake
+        run: sdkmanager 'ndk;27.2.12479018' 'cmake;3.22.1' 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Get llama.cpp with Qwen3.5 support
+        run: git clone --depth 1 https://github.com/ggml-org/llama.cpp app/src/main/cpp/llama.cpp
+      - name: Download and verify model
+        run: |
+          mkdir -p app/src/main/assets
+          curl -fL --retry 5 --retry-delay 3 'https://huggingface.co/atakhadivi/Qwen3.8-2B-Uncensored-GGUF/resolve/main/Qwen3.8-2B-Uncensored-Q4_K_M.gguf' -o app/src/main/assets/Qwen3.8-2B-Uncensored-Q4_K_M.gguf
+          echo '61713f6d29b507f0ddd2ed989683e3a5e997b920b0c4901ee8f332321d4b0cc9  app/src/main/assets/Qwen3.8-2B-Uncensored-Q4_K_M.gguf' | sha256sum --check
+      - name: Build arm64 APK
+        run: ./gradlew --no-daemon assembleDebug
+      - name: Verify APK exists
+        run: ls -lh app/build/outputs/apk/debug/*.apk
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: little-chat-arm64-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - name: Publish GitHub release APK
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: app/build/outputs/apk/debug/*.apk
