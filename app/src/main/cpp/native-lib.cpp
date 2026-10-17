@@ -4,6 +4,7 @@
 #include <mutex>
 #include <algorithm>
 #include <atomic>
+#include <thread>
 #include <android/log.h>
 #include "llama.h"
 
@@ -19,6 +20,12 @@ static void reset_context(int context_size) {
     llama_context_params p = llama_context_default_params();
     p.n_ctx = (uint32_t)context_size;
     p.n_batch = (uint32_t)std::min(context_size, 512);
+    // Use a conservative number of CPU threads to avoid saturating every core
+    // on mobile devices; users can compare this CPU build with the Vulkan build.
+    const unsigned int cores = std::thread::hardware_concurrency();
+    const int threads = (int)std::max(2u, std::min(cores == 0 ? 4u : cores, 8u));
+    p.n_threads = threads;
+    p.n_threads_batch = threads;
     g_ctx = llama_init_from_model(g_model, p);
     g_context = context_size;
 }
@@ -31,6 +38,15 @@ Java_com_k856487_littlechat_NativeLlm_loadModel(JNIEnv* env, jobject, jstring pa
     if (g_model) { llama_model_free(g_model); g_model = nullptr; }
     llama_backend_init();
     llama_model_params mp = llama_model_default_params();
+#if defined(LLAMA_USE_VULKAN)
+    // Vulkan build: request model-layer offload. llama.cpp falls back to CPU
+    // for operations/layers the selected Vulkan device cannot handle.
+    mp.n_gpu_layers = 99;
+    LOGE("Build variant: Vulkan enabled; requesting up to 99 GPU layers");
+#else
+    mp.n_gpu_layers = 0;
+    LOGE("Build variant: CPU optimized (KleidiAI where supported)");
+#endif
     g_model = llama_model_load_from_file(cpath, mp);
     env->ReleaseStringUTFChars(path, cpath);
     if (!g_model) { LOGE("Failed to load model"); return JNI_FALSE; }
