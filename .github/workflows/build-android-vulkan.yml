@@ -1,0 +1,65 @@
+name: Build Android Vulkan APK
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  build-vulkan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Gradle 8.11.1
+        run: |
+          curl -fL https://services.gradle.org/distributions/gradle-8.11.1-bin.zip -o /tmp/gradle.zip
+          unzip -q /tmp/gradle.zip -d /opt
+          echo '/opt/gradle-8.11.1/bin' >> "$GITHUB_PATH"
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: 12266719
+          packages: platform-tools
+      - name: Install Android NDK, CMake and Vulkan shader tools
+        run: |
+          sdkmanager 'ndk;27.2.12479018' 'cmake;3.22.1' 'platforms;android-35' 'build-tools;35.0.0'
+          sudo apt-get update
+          sudo apt-get install -y glslc spirv-headers
+      - name: Get llama.cpp with Qwen3.5 support
+        run: git clone --depth 1 https://github.com/ggml-org/llama.cpp app/src/main/cpp/llama.cpp
+      - name: Configure Android Vulkan SDK paths
+        run: |
+          echo "ANDROID_NDK=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          echo "Vulkan_GLSLC_EXECUTABLE=$(command -v glslc)" >> "$GITHUB_ENV"
+          echo "Vulkan_INCLUDE_DIR=$ANDROID_SDK_ROOT/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include" >> "$GITHUB_ENV"
+          echo "Vulkan_LIBRARY=$ANDROID_SDK_ROOT/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/29/libvulkan.so" >> "$GITHUB_ENV"
+      - name: Download and verify model
+        run: |
+          mkdir -p app/src/main/assets
+          curl -fL --retry 5 --retry-delay 3 'https://huggingface.co/atakhadivi/Qwen3.8-2B-Uncensored-GGUF/resolve/main/Qwen3.8-2B-Uncensored-Q4_K_M.gguf' -o app/src/main/assets/Qwen3.8-2B-Uncensored-Q4_K_M.gguf
+          echo '61713f6d29b507f0ddd2ed989683e3a5e997b920b0c4901ee8f332321d4b0cc9  app/src/main/assets/Qwen3.8-2B-Uncensored-Q4_K_M.gguf' | sha256sum --check
+      - name: Build Vulkan arm64 APK
+        run: |
+          test -x "$Vulkan_GLSLC_EXECUTABLE"
+          test -f "$Vulkan_LIBRARY"
+          gradle --no-daemon clean assembleDebug -PuseVulkan=true
+      - name: Verify Vulkan APK exists
+        run: test -f app/build/outputs/apk/debug/app-debug.apk && ls -lh app/build/outputs/apk/debug/app-debug.apk
+      - name: Rename Vulkan APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/little-chat-vulkan.apk
+      - name: Upload Vulkan APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: little-chat-vulkan-apk
+          path: app/build/outputs/apk/debug/little-chat-vulkan.apk
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
