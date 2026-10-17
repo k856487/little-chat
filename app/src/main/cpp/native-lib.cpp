@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <mutex>
+#include <algorithm>
 #include <android/log.h>
 #include "llama.h"
 
@@ -45,11 +46,11 @@ Java_com_k856487_littlechat_NativeLlm_generate(JNIEnv* env, jobject, jstring pro
     // Use the chat template embedded in the GGUF when available.
     llama_chat_message message = {"user", raw.c_str()};
     const char* tmpl = llama_model_chat_template(g_model, nullptr);
-    int needed = llama_chat_apply_template(g_model, tmpl, &message, 1, true, nullptr, 0);
+    int needed = llama_chat_apply_template(tmpl, &message, 1, true, nullptr, 0);
     std::string formatted;
     if (needed > 0) {
         std::vector<char> buf((size_t)needed + 1);
-        llama_chat_apply_template(g_model, tmpl, &message, 1, true, buf.data(), (int32_t)buf.size());
+        llama_chat_apply_template(tmpl, &message, 1, true, buf.data(), (int32_t)buf.size());
         formatted.assign(buf.data());
     } else {
         formatted = "<|im_start|>user\n" + raw + "<|im_end|>\n<|im_start|>assistant\n";
