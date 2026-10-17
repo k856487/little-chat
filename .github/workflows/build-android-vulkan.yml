@@ -38,9 +38,14 @@ jobs:
       - name: Configure Android Vulkan SDK paths
         run: |
           echo "ANDROID_NDK=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> "$GITHUB_ENV"
-          echo "Vulkan_GLSLC_EXECUTABLE=$(command -v glslc)" >> "$GITHUB_ENV"
-          echo "Vulkan_INCLUDE_DIR=$ANDROID_SDK_ROOT/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include" >> "$GITHUB_ENV"
-          echo "Vulkan_LIBRARY=$ANDROID_SDK_ROOT/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/29/libvulkan.so" >> "$GITHUB_ENV"
+          NDK="$ANDROID_SDK_ROOT/ndk/27.2.12479018"
+          VULKAN_LIB="$(find "$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android" -name libvulkan.so -print -quit)"
+          SPIRV_DIR="$(find /usr -name SPIRV-HeadersConfig.cmake -print -quit | xargs -r dirname)"
+          test -n "$VULKAN_LIB" && test -n "$SPIRV_DIR"
+          echo "VULKAN_GLSLC=$(command -v glslc)" >> "$GITHUB_ENV"
+          echo "VULKAN_INCLUDE=$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include" >> "$GITHUB_ENV"
+          echo "VULKAN_LIBRARY=$VULKAN_LIB" >> "$GITHUB_ENV"
+          echo "SPIRV_HEADERS_DIR=$SPIRV_DIR" >> "$GITHUB_ENV"
       - name: Download and verify model
         run: |
           mkdir -p app/src/main/assets
@@ -48,9 +53,13 @@ jobs:
           echo '61713f6d29b507f0ddd2ed989683e3a5e997b920b0c4901ee8f332321d4b0cc9  app/src/main/assets/Qwen3.8-2B-Uncensored-Q4_K_M.gguf' | sha256sum --check
       - name: Build Vulkan arm64 APK
         run: |
-          test -x "$Vulkan_GLSLC_EXECUTABLE"
-          test -f "$Vulkan_LIBRARY"
-          gradle --no-daemon clean assembleDebug -PuseVulkan=true
+          test -x "$VULKAN_GLSLC"
+          test -f "$VULKAN_LIBRARY"
+          gradle --no-daemon clean assembleDebug -PuseVulkan=true \
+            "-PvulkanGlslc=$VULKAN_GLSLC" \
+            "-PvulkanInclude=$VULKAN_INCLUDE" \
+            "-PvulkanLibrary=$VULKAN_LIBRARY" \
+            "-PspirvHeadersDir=$SPIRV_HEADERS_DIR"
       - name: Verify Vulkan APK exists
         run: test -f app/build/outputs/apk/debug/app-debug.apk && ls -lh app/build/outputs/apk/debug/app-debug.apk
       - name: Rename Vulkan APK
