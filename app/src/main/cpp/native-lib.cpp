@@ -37,9 +37,20 @@ Java_com_k856487_littlechat_NativeLlm_loadModel(JNIEnv* env, jobject, jstring pa
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_com_k856487_littlechat_NativeLlm_generate(JNIEnv* env, jobject, jstring prompt, jint maxTokens, jboolean thinkingMode) {
+Java_com_k856487_littlechat_NativeLlm_generate(JNIEnv* env, jobject, jstring prompt, jint maxTokens, jboolean thinkingMode, jobject progressCallback) {
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!g_model || !g_ctx) return env->NewStringUTF("模型尚未加载，请检查模型文件后重试。");
+    jclass callbackClass = env->GetObjectClass(progressCallback);
+    jmethodID progressMethod = env->GetMethodID(callbackClass, "onProgress", "(Ljava/lang/String;)V");
+    auto report = [&](const std::string& stage) {
+        if (progressMethod) {
+            jstring value = env->NewStringUTF(stage.c_str());
+            env->CallVoidMethod(progressCallback, progressMethod, value);
+            env->DeleteLocalRef(value);
+            if (env->ExceptionCheck()) env->ExceptionClear();
+        }
+    };
+    report("正在整理输入并进行分词…");
     const char* cprompt = env->GetStringUTFChars(prompt, nullptr);
     std::string raw(cprompt);
     env->ReleaseStringUTFChars(prompt, cprompt);
@@ -69,8 +80,33 @@ Java_com_k856487_littlechat_NativeLlm_generate(JNIEnv* env, jobject, jstring pro
     tokens.resize((size_t)n);
     if (tokens.size() + 8 >= (size_t)g_context) return env->NewStringUTF("输入内容超过当前上下文长度，请缩短问题或调大上下文设置。");
     llama_memory_clear(llama_get_memory(g_ctx), true);
-    llama_batch batch = llama_batch_get_one(tokens.data(), (int32_t)tokens.size());
-    if (llama_decode(g_ctx, batch) != 0) return env->NewStringUTF("推理失败：输入可能超过上下文长度或内存不足。");
+    report("输入已完成分词，正在执行模型推理…");
+    // Decode the prompt in chunks no larger than the context's batch limit.
+    const int32_t batchLimit = std::max(1, std::min(g_context, 512));
+    for (size_t offset = 0; offset < tokens.size();) {
+        const size_t count = std::min((size_t)batchLimit, tokens.size() - offset);
+        llama_batch batch = llama_batch_get_one(tokens.data() + offset, (int32_t)count);
+        if (offset != 0) {
+            // Rebuild a batch with absolute token positions for chunks after the first.
+            batch = llama_batch_init((int32_t)count, 0, 1);
+            batch.n_tokens = (int32_t)count;
+            for (int32_t j = 0; j < batch.n_tokens; ++j) {
+                batch.token[j] = tokens[offset + (size_t)j];
+                batch.pos[j] = (llama_pos)(offset + (size_t)j);
+                batch.n_seq_id[j] = 1;
+                batch.seq_id[j][0] = 0;
+                batch.logits[j] = (offset + (size_t)j == tokens.size() - 1) ? 1 : 0;
+            }
+        }
+        const int decodeResult = llama_decode(g_ctx, batch);
+        if (offset != 0) llama_batch_free(batch);
+        if (decodeResult != 0) {
+            report("模型处理输入失败（llama_decode 错误），请降低上下文或检查内存。");
+            return env->NewStringUTF("推理失败：模型无法处理输入，可能是内存不足或上下文过长。");
+        }
+        offset += count;
+    }
+    report("输入处理完成，开始逐 token 生成…");
     llama_sampler* sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
     llama_sampler_chain_add(sampler, llama_sampler_init_top_k(20));
     llama_sampler_chain_add(sampler, llama_sampler_init_top_p(0.95f, 1));
@@ -83,11 +119,13 @@ Java_com_k856487_littlechat_NativeLlm_generate(JNIEnv* env, jobject, jstring pro
         char piece[8192];
         int len = llama_token_to_piece(vocab, id, piece, sizeof(piece), 0, true);
         if (len > 0) output.append(piece, (size_t)len);
+        if ((i + 1) % 8 == 0) report("模型正在生成 token：" + std::to_string(i + 1) + "/" + std::to_string(maxTokens));
         llama_sampler_accept(sampler, id);
         llama_batch next = llama_batch_get_one(&id, 1);
         if (llama_decode(g_ctx, next) != 0) break;
     }
     llama_sampler_free(sampler);
+    report(output.empty() ? "生成结束，但模型未输出可见文本。" : "生成完成。");
     return env->NewStringUTF(output.c_str());
 }
 
