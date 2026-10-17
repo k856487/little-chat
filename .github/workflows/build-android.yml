@@ -39,15 +39,17 @@ jobs:
           mkdir -p app/src/main/assets
           curl -fL --retry 5 --retry-delay 3 'https://huggingface.co/atakhadivi/Qwen3.8-2B-Uncensored-GGUF/resolve/main/Qwen3.8-2B-Uncensored-Q4_K_M.gguf' -o app/src/main/assets/Qwen3.8-2B-Uncensored-Q4_K_M.gguf
           echo '61713f6d29b507f0ddd2ed989683e3a5e997b920b0c4901ee8f332321d4b0cc9  app/src/main/assets/Qwen3.8-2B-Uncensored-Q4_K_M.gguf' | sha256sum --check
-      - name: Build arm64 APK
-        run: gradle --no-daemon assembleDebug
-      - name: Verify APK exists
-        run: ls -lh app/build/outputs/apk/debug/*.apk
-      - name: Upload APK artifact
+      - name: Build optimized CPU arm64 APK (KleidiAI)
+        run: gradle --no-daemon clean assembleDebug -PuseVulkan=false
+      - name: Verify CPU APK exists
+        run: test -f app/build/outputs/apk/debug/app-debug.apk && ls -lh app/build/outputs/apk/debug/app-debug.apk
+      - name: Rename CPU APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/little-chat-cpu-kleidiAI.apk
+      - name: Upload optimized CPU APK
         uses: actions/upload-artifact@v4
         with:
-          name: little-chat-arm64-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: little-chat-cpu-kleidiAI-apk
+          path: app/build/outputs/apk/debug/little-chat-cpu-kleidiAI.apk
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
