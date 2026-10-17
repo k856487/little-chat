@@ -2,6 +2,8 @@ package com.k856487.littlechat
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -23,6 +25,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -74,6 +77,7 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun LittleChatScreen() {
+        val context = LocalContext.current
         val prefs = remember { getSharedPreferences(PREFS_NAME, MODE_PRIVATE) }
         val scope = rememberCoroutineScope()
         val native = remember { NativeLlm() }
@@ -91,6 +95,24 @@ class MainActivity : ComponentActivity() {
         var thinkingMode by remember { mutableStateOf(prefs.getBoolean("thinking_mode", false)) }
         var showMenu by remember { mutableStateOf(false) }
         val listState = rememberLazyListState()
+        val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) {
+                try {
+                    val name = context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                        val index = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                        if (cursor.moveToFirst() && index >= 0) cursor.getString(index) else "所选文件"
+                    } ?: "所选文件"
+                    val content = context.contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+                        ?: throw IllegalStateException("无法读取文件")
+                    val excerpt = content.take(100_000)
+                    val attachment = "请阅读以下文件内容并根据我的要求回答。\n[文件：$name]\n$excerpt"
+                    input = if (input.isBlank()) attachment else "$input\n\n$attachment"
+                    status = if (content.length > 100_000) "已读取 $name（仅导入前 100000 个字符）" else "已导入文件：$name"
+                } catch (e: Exception) {
+                    status = "文件读取失败：" + (e.message ?: "不支持的文件格式")
+                }
+            }
+        }
 
         fun persistActiveChat() {
             val title = messages.firstOrNull { it.user }?.text?.replace("\n", " ")?.take(24)?.ifBlank { "新对话" } ?: "新对话"
@@ -169,8 +191,16 @@ class MainActivity : ComponentActivity() {
                     if (history.isNotBlank()) append("\n此前对话仅供理解上下文：\n").append(history)
                     append("\n用户的最新问题：\n").append(text)
                 }
-                val answer = withContext(Dispatchers.IO) { native.generate(prompt, 256, thinkingMode) }
-                val cleanAnswer = answer.trim().ifBlank { "模型没有生成文本。请关闭思考模式后重试；如果仍然无响应，请重启应用。" }
+                val answer = try {
+                    withContext(Dispatchers.IO) {
+                        native.generate(prompt, 256, thinkingMode, GenerationProgress { stage ->
+                            scope.launch(Dispatchers.Main) { status = stage }
+                        })
+                    }
+                } catch (e: Exception) {
+                    "生成调用异常：" + (e.message ?: e.javaClass.simpleName)
+                }
+                val cleanAnswer = answer.trim().ifBlank { "模型没有生成可见文本。请查看状态提示；如果一直停在同一阶段，说明原生推理阶段没有继续执行。" }
                 messages.add(ChatMessage(false, cleanAnswer))
                 persistActiveChat()
                 generating = false
@@ -183,7 +213,7 @@ class MainActivity : ComponentActivity() {
                 Row(Modifier.fillMaxWidth().background(Color.White).padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("Little Chat", fontSize = 21.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF171717))
-                        Text(if (modelReady) "Qwen3.8 · 完全本地推理" else status, fontSize = 11.sp, color = Color(0xFF737373), maxLines = 1)
+                        Text(if (generating || modelLoading || !modelReady) status else "Qwen3.8 · 完全本地推理", fontSize = 11.sp, color = Color(0xFF737373), maxLines = 1)
                     }
                     IconButton(onClick = { startNewChat() }, enabled = !generating && !modelLoading) {
                         Text("＋", fontSize = 27.sp, color = Color(0xFF303030))
@@ -211,10 +241,12 @@ class MainActivity : ComponentActivity() {
                         if (generating) item { Text(if (thinkingMode) "正在思考…" else "正在生成…", Modifier.padding(start = 8.dp), color = Color.Gray, fontSize = 13.sp) }
                     }
                 }
-                Row(Modifier.fillMaxWidth().background(Color.White).navigationBarsPadding().padding(12.dp), verticalAlignment = Alignment.Bottom) {
-                    BasicTextField(value = input, onValueChange = { input = it }, modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp).background(Color(0xFFF4F4F5), RoundedCornerShape(22.dp)).padding(horizontal = 16.dp, vertical = 14.dp), textStyle = TextStyle(fontSize = 15.sp, color = Color(0xFF222222)), decorationBox = { inner -> Box { if (input.isEmpty()) Text("给 Little Chat 发送消息", color = Color.Gray, fontSize = 14.sp); inner() } }, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send), keyboardActions = KeyboardActions(onSend = { send() }))
-                    Spacer(Modifier.width(8.dp))
-                    Button(onClick = { send() }, enabled = modelReady && !generating && !modelLoading && input.isNotBlank(), modifier = Modifier.height(48.dp), contentPadding = PaddingValues(horizontal = 18.dp)) { Text("发送") }
+                Row(Modifier.fillMaxWidth().background(Color.White).navigationBarsPadding().padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.Bottom) {
+                    IconButton(onClick = { filePicker.launch(arrayOf("text/plain", "text/*", "application/json")) }, enabled = !generating && !modelLoading) { Text("📎", fontSize = 21.sp) }
+                    BasicTextField(value = input, onValueChange = { input = it }, modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp).background(Color(0xFFF4F4F5), RoundedCornerShape(22.dp)).padding(horizontal = 14.dp, vertical = 14.dp), textStyle = TextStyle(fontSize = 15.sp, color = Color(0xFF222222)), decorationBox = { inner -> Box { if (input.isEmpty()) Text("给 Little Chat 发送消息", color = Color.Gray, fontSize = 14.sp); inner() } }, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send), keyboardActions = KeyboardActions(onSend = { send() }))
+                    IconButton(onClick = { thinkingMode = !thinkingMode; prefs.edit().putBoolean("thinking_mode", thinkingMode).apply() }, enabled = !generating && !modelLoading, modifier = Modifier.size(44.dp)) { Text(if (thinkingMode) "🧠" else "💭", fontSize = 21.sp) }
+                    Spacer(Modifier.width(2.dp))
+                    Button(onClick = { send() }, enabled = modelReady && !generating && !modelLoading && input.isNotBlank(), modifier = Modifier.height(48.dp), contentPadding = PaddingValues(horizontal = 13.dp)) { Text("↑", fontSize = 22.sp) }
                 }
             }
         }
@@ -230,7 +262,7 @@ class MainActivity : ComponentActivity() {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text("思考模式", fontSize = 15.sp)
-                                Text(if (thinkingMode) "允许模型输出较长的推理过程" else "优先直接回答，通常更快", fontSize = 12.sp, color = Color.Gray)
+                                Text(if (thinkingMode) "已开启（输入栏 🧠 图标）" else "已关闭（输入栏 💭 图标）", fontSize = 12.sp, color = Color.Gray)
                             }
                             Switch(checked = thinkingMode, onCheckedChange = {
                                 thinkingMode = it
