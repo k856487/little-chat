@@ -44,9 +44,9 @@ Java_com_k856487_littlechat_NativeLlm_generate(JNIEnv* env, jobject, jstring pro
     std::string raw(cprompt);
     env->ReleaseStringUTFChars(prompt, cprompt);
     if (thinkingMode == JNI_TRUE) {
-        raw += "\\n请先充分分析问题，再给出准确的最终回答。";
+        raw += "\n请先充分分析问题，再给出准确的最终回答。";
     } else {
-        raw += "\\n/no_think\\n请直接给出最终答案，不要输出思考过程。";
+        raw += "\n/no_think\n请直接给出最终答案，不要输出思考过程。";
     }
     // Use the chat template embedded in the GGUF when available.
     llama_chat_message message = {"user", raw.c_str()};
