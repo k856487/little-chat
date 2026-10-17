@@ -29,6 +29,7 @@ jobs:
         uses: android-actions/setup-android@v3
         with:
           cmdline-tools-version: 12266719
+          packages: platform-tools
       - name: Install Android NDK and CMake
         run: sdkmanager 'ndk;27.2.12479018' 'cmake;3.22.1' 'platforms;android-35' 'build-tools;35.0.0'
       - name: Get llama.cpp with Qwen3.5 support
