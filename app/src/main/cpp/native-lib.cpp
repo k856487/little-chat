@@ -37,12 +37,17 @@ Java_com_k856487_littlechat_NativeLlm_loadModel(JNIEnv* env, jobject, jstring pa
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_com_k856487_littlechat_NativeLlm_generate(JNIEnv* env, jobject, jstring prompt, jint maxTokens) {
+Java_com_k856487_littlechat_NativeLlm_generate(JNIEnv* env, jobject, jstring prompt, jint maxTokens, jboolean thinkingMode) {
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!g_model || !g_ctx) return env->NewStringUTF("模型尚未加载，请检查模型文件后重试。");
     const char* cprompt = env->GetStringUTFChars(prompt, nullptr);
     std::string raw(cprompt);
     env->ReleaseStringUTFChars(prompt, cprompt);
+    if (thinkingMode == JNI_TRUE) {
+        raw += "\\n请先充分分析问题，再给出准确的最终回答。";
+    } else {
+        raw += "\\n/no_think\\n请直接给出最终答案，不要输出思考过程。";
+    }
     // Use the chat template embedded in the GGUF when available.
     llama_chat_message message = {"user", raw.c_str()};
     const char* tmpl = llama_model_chat_template(g_model, nullptr);
@@ -62,6 +67,7 @@ Java_com_k856487_littlechat_NativeLlm_generate(JNIEnv* env, jobject, jstring pro
     n = llama_tokenize(vocab, formatted.c_str(), (int32_t)formatted.size(), tokens.data(), (int32_t)tokens.size(), true, true);
     if (n < 0) return env->NewStringUTF("输入过长，请减少对话内容或增大上下文设置。");
     tokens.resize((size_t)n);
+    if (tokens.size() + 8 >= (size_t)g_context) return env->NewStringUTF("输入内容超过当前上下文长度，请缩短问题或调大上下文设置。");
     llama_memory_clear(llama_get_memory(g_ctx), true);
     llama_batch batch = llama_batch_get_one(tokens.data(), (int32_t)tokens.size());
     if (llama_decode(g_ctx, batch) != 0) return env->NewStringUTF("推理失败：输入可能超过上下文长度或内存不足。");
@@ -71,7 +77,7 @@ Java_com_k856487_littlechat_NativeLlm_generate(JNIEnv* env, jobject, jstring pro
     llama_sampler_chain_add(sampler, llama_sampler_init_temp(0.6f));
     llama_sampler_chain_add(sampler, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
     std::string output;
-    for (int i = 0; i < maxTokens; ++i) {
+    for (int i = 0; i < maxTokens && tokens.size() + (size_t)i + 1 < (size_t)g_context; ++i) {
         llama_token id = llama_sampler_sample(sampler, g_ctx, -1);
         if (llama_vocab_is_eog(vocab, id)) break;
         char piece[8192];
