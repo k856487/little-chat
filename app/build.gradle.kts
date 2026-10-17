@@ -14,7 +14,14 @@ android {
         versionCode = 1
         versionName = "1.0.0"
         ndk { abiFilters += listOf("arm64-v8a") }
-        externalNativeBuild { cmake { cppFlags += "-std=c++17" } }
+        externalNativeBuild {
+            cmake {
+                cppFlags += "-std=c++17"
+                val useVulkanBuild = providers.gradleProperty("useVulkan").orNull == "true"
+                arguments += if (useVulkanBuild) "-DGGML_VULKAN=ON" else "-DGGML_VULKAN=OFF"
+                arguments += if (useVulkanBuild) "-DGGML_CPU_KLEIDIAI=OFF" else "-DGGML_CPU_KLEIDIAI=ON"
+            }
+        }
     }
     buildFeatures { compose = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
