@@ -25,9 +25,11 @@ The model is large for an APK. The intended release build should download and ve
 
 Use a native Android UI and llama.cpp through JNI. Keep the inference layer isolated from the UI so the chat screen and settings can be simplified without changing the GGUF runtime. Store conversations and settings locally. The model must be copied from packaged assets into app-private storage before loading.
 
-## Build status
+## Build
 
-This repository is being initialized. A successful APK build and on-device inference test are required before describing the app as working. The key acceptance test is that the packaged model loads and produces a response on an ARM64 Android device, with context length adjustable in Settings.
+GitHub Actions builds an ARM64 debug APK on pushes to `main` and on manual workflow dispatch. The workflow downloads the model from Hugging Face, verifies its SHA-256, packages it into the APK, and uploads the APK as an Actions artifact. The resulting APK is about 1.3 GB and requires substantial free storage to install. The artifact is available from the repository's Actions page for 14 days after a successful run.
+
+The app currently implements the Compose chat screen, JNI inference bridge, local model extraction, and context-length setting. It has not yet been verified on a physical Android device; treat the first CI build as a build test, not as proof of successful on-device inference.
 
 ## Attribution and license
 
