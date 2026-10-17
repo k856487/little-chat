@@ -20,6 +20,12 @@ android {
                 val useVulkanBuild = providers.gradleProperty("useVulkan").orNull == "true"
                 arguments += if (useVulkanBuild) "-DGGML_VULKAN=ON" else "-DGGML_VULKAN=OFF"
                 arguments += if (useVulkanBuild) "-DGGML_CPU_KLEIDIAI=OFF" else "-DGGML_CPU_KLEIDIAI=ON"
+                if (useVulkanBuild) {
+                    providers.gradleProperty("vulkanGlslc").orNull?.let { arguments += "-DVulkan_GLSLC_EXECUTABLE=$it" }
+                    providers.gradleProperty("vulkanInclude").orNull?.let { arguments += "-DVulkan_INCLUDE_DIR=$it" }
+                    providers.gradleProperty("vulkanLibrary").orNull?.let { arguments += "-DVulkan_LIBRARY=$it" }
+                    providers.gradleProperty("spirvHeadersDir").orNull?.let { arguments += "-DSPIRV-Headers_DIR=$it" }
+                }
             }
         }
     }
