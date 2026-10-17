@@ -74,6 +74,14 @@ Java_com_k856487_littlechat_NativeLlm_generate(JNIEnv* env, jobject, jstring pro
     } else {
         formatted = "<|im_start|>user\n" + raw + "<|im_end|>\n<|im_start|>assistant\n";
     }
+    // Qwen3-style templates expect /no_think in the assistant prefix, not in user text.
+    if (thinkingMode != JNI_TRUE) {
+        const std::string assistantPrefix = "<|im_start|>assistant\\n";
+        const size_t assistantPos = formatted.rfind(assistantPrefix);
+        if (assistantPos != std::string::npos) {
+            formatted.insert(assistantPos + assistantPrefix.size(), "/no_think\\n");
+        }
+    }
     const llama_vocab* vocab = llama_model_get_vocab(g_model);
     int n = -llama_tokenize(vocab, formatted.c_str(), (int32_t)formatted.size(), nullptr, 0, true, true);
     if (n <= 0) return env->NewStringUTF("无法对输入进行分词。");
@@ -130,6 +138,22 @@ Java_com_k856487_littlechat_NativeLlm_generate(JNIEnv* env, jobject, jstring pro
     }
     const bool wasCancelled = g_cancel_generation.load();
     llama_sampler_free(sampler);
+    if (thinkingMode != JNI_TRUE) {
+        // Defensive output filter: never expose a hidden reasoning block when thinking is off.
+        size_t open = output.find("<think>");
+        while (open != std::string::npos) {
+            const size_t close = output.find("</think>", open + 7);
+            if (close == std::string::npos) {
+                output.erase(open);
+                break;
+            }
+            output.erase(open, close + 8 - open);
+            open = output.find("<think>");
+        }
+        // Remove any stray closing marker from malformed model output.
+        size_t stray;
+        while ((stray = output.find("</think>")) != std::string::npos) output.erase(stray, 8);
+    }
     report(wasCancelled ? "已中断生成。" : (output.empty() ? "生成结束，但模型未输出可见文本。" : "生成完成。"));
     return env->NewStringUTF(output.c_str());
 }
