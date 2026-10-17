@@ -76,10 +76,10 @@ Java_com_k856487_littlechat_NativeLlm_generate(JNIEnv* env, jobject, jstring pro
     }
     // Qwen3-style templates expect /no_think in the assistant prefix, not in user text.
     if (thinkingMode != JNI_TRUE) {
-        const std::string assistantPrefix = "<|im_start|>assistant\\n";
+        const std::string assistantPrefix = "<|im_start|>assistant\n";
         const size_t assistantPos = formatted.rfind(assistantPrefix);
         if (assistantPos != std::string::npos) {
-            formatted.insert(assistantPos + assistantPrefix.size(), "/no_think\\n");
+            formatted.insert(assistantPos + assistantPrefix.size(), "/no_think\n");
         }
     }
     const llama_vocab* vocab = llama_model_get_vocab(g_model);
