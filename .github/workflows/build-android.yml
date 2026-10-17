@@ -18,6 +18,10 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.11.1
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
       - name: Install Android NDK and CMake
@@ -30,7 +34,7 @@ jobs:
           curl -fL --retry 5 --retry-delay 3 'https://huggingface.co/atakhadivi/Qwen3.8-2B-Uncensored-GGUF/resolve/main/Qwen3.8-2B-Uncensored-Q4_K_M.gguf' -o app/src/main/assets/Qwen3.8-2B-Uncensored-Q4_K_M.gguf
           echo '61713f6d29b507f0ddd2ed989683e3a5e997b920b0c4901ee8f332321d4b0cc9  app/src/main/assets/Qwen3.8-2B-Uncensored-Q4_K_M.gguf' | sha256sum --check
       - name: Build arm64 APK
-        run: ./gradlew --no-daemon assembleDebug
+        run: gradle --no-daemon assembleDebug
       - name: Verify APK exists
         run: ls -lh app/build/outputs/apk/debug/*.apk
       - name: Upload APK artifact
