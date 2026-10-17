@@ -3,6 +3,7 @@
 #include <vector>
 #include <mutex>
 #include <algorithm>
+#include <atomic>
 #include <android/log.h>
 #include "llama.h"
 
@@ -11,6 +12,7 @@ static llama_model* g_model = nullptr;
 static llama_context* g_ctx = nullptr;
 static std::mutex g_mutex;
 static int g_context = 2048;
+static std::atomic<bool> g_cancel_generation(false);
 
 static void reset_context(int context_size) {
     if (g_ctx) { llama_free(g_ctx); g_ctx = nullptr; }
@@ -39,6 +41,7 @@ Java_com_k856487_littlechat_NativeLlm_loadModel(JNIEnv* env, jobject, jstring pa
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_k856487_littlechat_NativeLlm_generate(JNIEnv* env, jobject, jstring prompt, jint maxTokens, jboolean thinkingMode, jobject progressCallback) {
     std::lock_guard<std::mutex> lock(g_mutex);
+    g_cancel_generation.store(false);
     if (!g_model || !g_ctx) return env->NewStringUTF("模型尚未加载，请检查模型文件后重试。");
     jclass callbackClass = env->GetObjectClass(progressCallback);
     jmethodID progressMethod = env->GetMethodID(callbackClass, "onProgress", "(Ljava/lang/String;)V");
@@ -83,7 +86,7 @@ Java_com_k856487_littlechat_NativeLlm_generate(JNIEnv* env, jobject, jstring pro
     report("输入已完成分词，正在执行模型推理…");
     // Decode the prompt in chunks no larger than the context's batch limit.
     const int32_t batchLimit = std::max(1, std::min(g_context, 512));
-    for (size_t offset = 0; offset < tokens.size();) {
+    for (size_t offset = 0; offset < tokens.size() && !g_cancel_generation.load();) {
         const size_t count = std::min((size_t)batchLimit, tokens.size() - offset);
         llama_batch batch = llama_batch_get_one(tokens.data() + offset, (int32_t)count);
         if (offset != 0) {
@@ -106,6 +109,7 @@ Java_com_k856487_littlechat_NativeLlm_generate(JNIEnv* env, jobject, jstring pro
         }
         offset += count;
     }
+    if (g_cancel_generation.load()) { report("已中断生成。"); return env->NewStringUTF(""); }
     report("输入处理完成，开始逐 token 生成…");
     llama_sampler* sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
     llama_sampler_chain_add(sampler, llama_sampler_init_top_k(20));
@@ -113,7 +117,7 @@ Java_com_k856487_littlechat_NativeLlm_generate(JNIEnv* env, jobject, jstring pro
     llama_sampler_chain_add(sampler, llama_sampler_init_temp(0.6f));
     llama_sampler_chain_add(sampler, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
     std::string output;
-    for (int i = 0; i < maxTokens && tokens.size() + (size_t)i + 1 < (size_t)g_context; ++i) {
+    for (int i = 0; i < maxTokens && tokens.size() + (size_t)i + 1 < (size_t)g_context && !g_cancel_generation.load(); ++i) {
         llama_token id = llama_sampler_sample(sampler, g_ctx, -1);
         if (llama_vocab_is_eog(vocab, id)) break;
         char piece[8192];
@@ -124,9 +128,15 @@ Java_com_k856487_littlechat_NativeLlm_generate(JNIEnv* env, jobject, jstring pro
         llama_batch next = llama_batch_get_one(&id, 1);
         if (llama_decode(g_ctx, next) != 0) break;
     }
+    const bool wasCancelled = g_cancel_generation.load();
     llama_sampler_free(sampler);
-    report(output.empty() ? "生成结束，但模型未输出可见文本。" : "生成完成。");
+    report(wasCancelled ? "已中断生成。" : (output.empty() ? "生成结束，但模型未输出可见文本。" : "生成完成。"));
     return env->NewStringUTF(output.c_str());
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_k856487_littlechat_NativeLlm_cancelGeneration(JNIEnv*, jobject) {
+    g_cancel_generation.store(true);
 }
 
 extern "C" JNIEXPORT void JNICALL
